@@ -107,6 +107,7 @@ def main():
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--grad-ckpt", action="store_true", dest="grad_ckpt")
     ap.add_argument("--nc", action="store_true")
+    ap.add_argument("--save-cath-emb", action="store_true", dest="save_cath_emb")
     a = ap.parse_args()
 
     device = "cuda"
@@ -135,6 +136,8 @@ def main():
     ntr = sum(p.numel() for p in model.parameters() if p.requires_grad)
     log.info("trainable params: %.2fM" % (ntr / 1e6))
 
+    EMB_HOLD = {}
+
     def eval_all(tag):
         res = {}
         per_query = {}
@@ -152,6 +155,8 @@ def main():
             r.update(delta=d_abs, delta_rel=d_rel, n=len(df))
             res[split] = r
         Zc = encode_all(model, tok, list(cath.seq.to_numpy()), device, a.maxlen)
+        if tag == "final":
+            EMB_HOLD["Zc"] = Zc
         rc = {}
         for lb in ("cath_h", "cath_t"):
             t1, t5, a1, a5 = retrieval_metrics(Zc, cath[lb].to_numpy(), device=device,
@@ -303,6 +308,13 @@ def main():
 
     res, per_query = eval_all("final")
     np.savez_compressed(RESULTS / ("perq_" + name + ".npz"), **per_query)
+    if a.save_cath_emb and "Zc" in EMB_HOLD:
+        import os as _os
+        _d = _os.environ["HYP_DATA"] + "/emb"
+        _os.makedirs(_d, exist_ok=True)
+        np.save(_d + "/ftcath_" + name + ".npy", EMB_HOLD["Zc"].astype(np.float16))
+        log.info("saved CATH embeddings %s for %s", EMB_HOLD["Zc"].shape, name)
+
     res["config"] = vars(a); res["history"] = hist
     res["trainable_params"] = int(ntr)
     if a.nc:
